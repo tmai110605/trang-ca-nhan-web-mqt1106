@@ -773,6 +773,21 @@
         }
     </style>
 </head>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const SUPABASE_URL = 'https://mknxfagxojcwakpbdapd.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rbnhmYWd4b2pjd2FrcGJkYXBkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU1ODk0NzQsImV4cCI6MjA3MTE2NTQ3NH0.wqm9kVgf9eBa_rYpc5kzGzrP5AC_Nb54p0ywoMGHZZM';
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // map (week,bai) -> slot
+  const toSlot = (week, bai) => (week - 1) * 2 + bai;
+
+  // map slot -> {week,bai}
+  const fromSlot = (slot) => ({
+    week: Math.floor((slot + 1) / 2),
+    bai: (slot % 2 === 1) ? 1 : 2
+  });
+</script>
 <body>
     <div class="bg-animation">
         <div class="floating-elements">
@@ -863,7 +878,28 @@
         const SUBMIT_PASSWORD = "Thai0987787961";
         
         // Storage for submitted links
-        let weeklyData = JSON.parse(localStorage.getItem('weeklyData')) || {};
+        let weeklyData = {};
+
+        // Tải dữ liệu từ Supabase rồi mới generate UI
+        async function loadWeeklyDataFromDB() {
+        const { data, error } = await supabase
+            .from('cn')
+            .select('slot, link')
+            .order('slot', { ascending: true });
+
+        if (error) {
+            console.error(error);
+            return;
+        }
+
+        weeklyData = {}; // reset
+        for (const row of data) {
+            if (!row.link) continue; // bỏ ô trống
+            const { week, bai } = fromSlot(row.slot);
+            weeklyData[week] ??= {};
+            weeklyData[week][`link${bai}`] = row.link;
+        }
+        }
         
         // Modal state
         let currentAction = null;
@@ -1071,65 +1107,70 @@
         }
 
         // Submit individual link
-        function submitLink() {
+        async function submitLink() {
             const linkValue = document.getElementById(`link${currentLink}-${currentWeek}`).value.trim();
-            
             if (!linkValue) {
                 showMessage(currentWeek, 'error', '❌ Vui lòng nhập link!');
                 return;
             }
 
-            // Initialize week data if not exists
-            if (!weeklyData[currentWeek]) {
-                weeklyData[currentWeek] = {};
+            // 1) Ghi đè đúng slot vào DB
+            const slot = toSlot(currentWeek, currentLink);
+            const { data, error } = await supabase.rpc('upsert_cn', {
+                p_week: currentWeek,
+                p_bai: currentLink,
+                p_link: linkValue
+            });
+            if (error) {
+                console.error(error);
+                showMessage(currentWeek, 'error', '⚠️ Lỗi khi lưu vào cơ sở dữ liệu!');
+                return;
             }
 
-            // Save the link
+            // 2) Cập nhật bộ nhớ tạm & UI
+            weeklyData[currentWeek] ??= {};
             weeklyData[currentWeek][`link${currentLink}`] = linkValue;
-            weeklyData[currentWeek][`submitted${currentLink}`] = new Date().toLocaleString('vi-VN');
 
-            // Save to localStorage
-            localStorage.setItem('weeklyData', JSON.stringify(weeklyData));
-
-            // Update UI
             const input = document.getElementById(`link${currentLink}-${currentWeek}`);
             input.readOnly = true;
             input.style.background = 'rgba(255, 255, 255, 0.9)';
             input.style.borderColor = 'rgba(0, 150, 255, 0.3)';
             input.style.boxShadow = 'none';
 
-            // Update status
             updateWeekStatus(currentWeek);
-
-            showMessage(currentWeek, 'success', `🎉 Đã nộp bài tập ${currentLink} thành công!`);
-            
-            // Refresh the week card to show/hide delete button
             refreshWeekCard(currentWeek);
-            
-            // Update profile stats
             updateProfileStats();
+            showMessage(currentWeek, 'success', `🎉 Đã nộp bài tập ${currentLink} thành công!`);
         }
 
+
         // Delete link
-        function deleteLink() {
+        async function deleteLink() {
             if (!weeklyData[currentWeek] || !weeklyData[currentWeek][`link${currentLink}`]) {
                 showMessage(currentWeek, 'error', '❌ Không có dữ liệu để xóa!');
                 return;
             }
 
-            // Remove the link
-            delete weeklyData[currentWeek][`link${currentLink}`];
-            delete weeklyData[currentWeek][`submitted${currentLink}`];
+            const slot = toSlot(currentWeek, currentLink);
 
-            // If no links left in week, remove week data
+            // 1) Cập nhật DB: set link = null
+            const { error } = await supabase
+                .from('cn')
+                .update({ link: null, updated_at: new Date().toISOString() })
+                .eq('slot', slot);
+
+            if (error) {
+                console.error(error);
+                showMessage(currentWeek, 'error', '⚠️ Lỗi khi xóa trong cơ sở dữ liệu!');
+                return;
+            }
+
+            // 2) Cập nhật bộ nhớ tạm & UI
+            delete weeklyData[currentWeek][`link${currentLink}`];
             if (!weeklyData[currentWeek].link1 && !weeklyData[currentWeek].link2) {
                 delete weeklyData[currentWeek];
             }
 
-            // Save to localStorage
-            localStorage.setItem('weeklyData', JSON.stringify(weeklyData));
-
-            // Update UI
             const input = document.getElementById(`link${currentLink}-${currentWeek}`);
             input.value = '';
             input.readOnly = true;
@@ -1137,15 +1178,12 @@
             input.style.borderColor = 'rgba(0, 150, 255, 0.3)';
             input.style.boxShadow = 'none';
 
-            // Update status and refresh card
             updateWeekStatus(currentWeek);
             refreshWeekCard(currentWeek);
-
-            // Update profile stats
             updateProfileStats();
-
             showMessage(currentWeek, 'success', `🗑️ Đã xóa bài tập ${currentLink} thành công!`);
         }
+
 
         // Refresh week card to update delete buttons
         function refreshWeekCard(weekNumber) {
@@ -1199,23 +1237,28 @@
         }
 
         // Get status text for week
-        function getStatusText(weekNumber) {
-            const weekData = weeklyData[weekNumber];
-            if (!weekData) return 'Chưa nộp';
-            
-            const hasLink1 = weekData.link1 && weekData.link1.trim();
-            const hasLink2 = weekData.link2 && weekData.link2.trim();
-            
-            if (hasLink1 && hasLink2) return '✅ Hoàn thành';
-            if (hasLink1 || hasLink2) return '⏳ Nộp 1/2';
-            return '📝 Chưa nộp';
+        // helper: coi 1 giá trị link có “thật sự có” hay không
+        function isFilled(v) {
+        return typeof v === 'string' && v.trim().length > 0;
         }
+
+        function getStatusText(weekNumber) {
+        const weekData = weeklyData?.[weekNumber];
+        if (!weekData) return '📝 Chưa nộp';
+
+        const hasLink1 = isFilled(weekData.link1);
+        const hasLink2 = isFilled(weekData.link2);
+
+        if (hasLink1 && hasLink2) return '✅ Hoàn thành';
+        if (hasLink1 || hasLink2) return '⏳ Nộp 1/2';
+        return '📝 Chưa nộp';
+        }
+
 
         // Update week status
         function updateWeekStatus(weekNumber) {
             const status = document.getElementById(`status-${weekNumber}`);
             status.className = `week-status ${getStatusClass(weekNumber)}`;
-            status.textContent = getStatusText(weekNumber);
         }
 
         // Show message
@@ -1240,8 +1283,10 @@
         }
 
         // Initialize page
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadWeeklyDataFromDB();
             generateWeeks();
+
             
             // Add smooth scrolling
             document.querySelectorAll('a[href^="#"]').forEach(anchor => {
