@@ -875,7 +875,14 @@
 
     <script>
         // Password for submission (you can change this)
-        const SUBMIT_PASSWORD = "Thai0987787961";
+        const SALT = 'week-app-v1';
+        const PASS_HASH = '49456df77caad5cf741970e65d615f6080d0eb2311592c52d789165976d60e0c'; // sha256(SALT + 'plantest')
+
+        async function sha256(str) {
+        const buf = new TextEncoder().encode(str);
+        const hash = await crypto.subtle.digest('SHA-256', buf);
+        return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
+        }
         
         // Storage for submitted links
         let weeklyData = {};
@@ -1065,24 +1072,17 @@
         }
 
         // Confirm password
-        function confirmPassword() {
-            const passwordInput = document.getElementById('passwordInput');
-            const password = passwordInput.value;
-            
-            if (password !== SUBMIT_PASSWORD) {
+        async function confirmPassword() {
+            const input = document.getElementById('passwordInput').value;
+            const ok = (await sha256(SALT + input)) === PASS_HASH;
+            if (!ok) {
                 showMessage(currentWeek, 'error', '❌ Mật khẩu không đúng!');
                 closePasswordModal();
                 return;
             }
-
-            if (currentAction === 'edit') {
-                unlockInputField();
-            } else if (currentAction === 'submit') {
-                submitLink();
-            } else if (currentAction === 'delete') {
-                deleteLink();
-            }
-            
+            if (currentAction === 'edit')      unlockInputField();
+            else if (currentAction === 'submit') submitLink();
+            else if (currentAction === 'delete') deleteLink();
             closePasswordModal();
         }
 
