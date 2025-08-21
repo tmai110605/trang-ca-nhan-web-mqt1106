@@ -874,8 +874,8 @@
 
     <script>
         // Password for submission (you can change this)
-        const SALT = 'week-app-v1';
-        const PASS_HASH = '49456df77caad5cf741970e65d615f6080d0eb2311592c52d789165976d60e0c'; 
+        const SALT = 'my_secret_salt';
+        const PASS_HASH = '49456df77c324ee4r6t23213a4335356dffd464a6gfgfdd5cf741970e65d61563heh565566trhsj/rgfdrredf6ttre2823f6080d0eb2311592c52d789165976d60e0c';  
 
         async function sha256(str) {
         const buf = new TextEncoder().encode(str);
@@ -1073,15 +1073,28 @@
         // Confirm password
         async function confirmPassword() {
             const input = document.getElementById('passwordInput').value;
-            const ok = (await sha256(SALT + input)) === PASS_HASH;
-            if (!ok) {
+
+            const { data, error } = await supabase
+                .rpc('check_password', { p_password: input });
+
+            if (error) {
+                console.error(error);
+                showMessage(currentWeek, 'error', '⚠️ Lỗi xác thực với server!');
+                closePasswordModal();
+                return;
+            }
+
+            if (!data) {
                 showMessage(currentWeek, 'error', '❌ Mật khẩu không đúng!');
                 closePasswordModal();
                 return;
             }
+
+            // Nếu đúng thì thực hiện hành động
             if (currentAction === 'edit')      unlockInputField();
             else if (currentAction === 'submit') submitLink();
             else if (currentAction === 'delete') deleteLink();
+
             closePasswordModal();
         }
 
